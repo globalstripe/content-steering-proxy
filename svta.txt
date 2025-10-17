@@ -1,0 +1,25 @@
+/* CDN-A, CDN-B
+const CDN_A = 'CDN-A';
+const CDN_B = 'CDN-B';
+const CDN_C = 'CDN-C';
+
+# From BrightCove Example: https://www.content-steering.com/
+#EXTM3U
+#EXT-X-CONTENT-STEERING:SERVER-URI="https://cloudfront.content-steering.com/hls.hcsm?steering_params=eyJjZG5PcmRlciI6WyJjZG4tYyIsImNkbi1hIiwiY2RuLWIiXSwibWluQml0cmF0ZSI6MTQyMDY5MiwicGF0aHdheXMiOlt7ImlkIjoiY2RuLWMiLCJ0aHJvdWdocHV0IjoyMDAwMDAwMH0seyJpZCI6ImNkbi1hIiwidGhyb3VnaHB1dCI6MjAwMDAwMDB9LHsiaWQiOiJjZG4tYiIsInRocm91Z2hwdXQiOjIwMDAwMDAwfV19",PATHWAY-ID="cdn-a"
+#EXT-X-VERSION:7
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MEDIA:URI="https://akamai.content-steering.com/bbb_hls/audio_128kbps/playlist.m3u8",TYPE=AUDIO,GROUP-ID="cdn-c",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://cloudfront.content-steering.com/bbb_hls/audio_128kbps/playlist.m3u8",TYPE=AUDIO,GROUP-ID="cdn-a",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://fastly.content-steering.com/bbb_hls/audio_128kbps/playlist.m3u8",TYPE=AUDIO,GROUP-ID="cdn-b",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-STREAM-INF:PROGRAM-ID=0,BANDWIDTH=7153972,AVERAGE-BANDWIDTH=3397112,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2",PATHWAY-ID="cdn-c",AUDIO="cdn-c"
+{
+    "VERSION": 1,
+    "TTL": 10,
+    "RELOAD-URI": "https://cloudfront.content-steering.com/dash.dcsm?steering_params=eyJtaW5CaXRyYXRlIjo5MTQ4NzgsImNkbk9yZGVyIjpbImNkbi1jIiwiY2RuLWEiLCJjZG4tYiJdLCJwYXRod2F5cyI6W3siaWQiOiJjZG4tYSIsInRocm91Z2hwdXQiOjkwMDAwMDB9LHsiaWQiOiJjZG4tYiIsInRocm91Z2hwdXQiOjgwMDAwMDB9LHsiaWQiOiJjZG4tYyIsInRocm91Z2hwdXQiOjEwMDB9XSwidGltZXN0YW1wIjoxNzYwNzMwMDEwNjIyfQ==",
+    "PATHWAY-PRIORITY": [
+        "cdn-c",
+        "cdn-a",
+        "cdn-b"
+    ]
+}
+*/
