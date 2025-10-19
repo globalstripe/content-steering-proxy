@@ -1,8 +1,20 @@
 // https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com/out/v1/1ddf1ec05c0b4585bcf3df2a40d5ffdf/index.m3u8
 
+// Load environment variables from .env.local
+require('dotenv').config({ path: '.env.local' });
+
 const express = require('express');
 const { createProxyMiddleware, fixRequestBody } = require('http-proxy-middleware');
 const { Transform } = require('stream');
+const jwt = require('jsonwebtoken');
+
+// Some useful parses
+// https://www.npmjs.com/package/m3u8-parser
+const m3u8Parser = require('m3u8-parser');
+
+const hlsParser = new m3u8Parser.Parser();
+
+
 
 const hlshcsm = {
     "VERSION": 1,
@@ -22,6 +34,221 @@ const pathB = '#EXT-X-MEDIA:URI="https://fastly.content-steering.com/bbb_hls/aud
 
 const app = express();
 
+// Middleware
+app.use(express.json());
+
+// JWT encoding function for content steering parameters
+function encodeSteeringParams(payload) {
+    // Default payload structure based on your example
+    const defaultPayload = {
+        minBitrate: 914878,
+        cdnOrder: ["cdn-c", "cdn-a", "cdn-b"],
+        pathways: [
+            { id: "cdn-a", throughput: 9000000 },
+            { id: "cdn-b", throughput: 8000000 },
+            { id: "cdn-c", throughput: 1000 }
+        ],
+        timestamp: Date.now()
+    };
+    
+    // Merge with provided payload
+    const finalPayload = { ...defaultPayload, ...payload };
+    
+    // Create JWT token (unsigned for now, but you can add a secret if needed)
+    const token = jwt.sign(finalPayload, '', { algorithm: 'none' });
+    
+    // Extract just the payload part (middle section of JWT)
+    const parts = token.split('.');
+    return parts[1]; // This is the base64-encoded payload
+}
+
+// Function to generate full JWT token with secret (if needed)
+function generateJWT(payload, secret = '') {
+    const defaultPayload = {
+        minBitrate: 914878,
+        cdnOrder: ["cdn-c", "cdn-a", "cdn-b"],
+        pathways: [
+            { id: "cdn-a", throughput: 9000000 },
+            { id: "cdn-b", throughput: 8000000 },
+            { id: "cdn-c", throughput: 1000 }
+        ],
+        timestamp: Date.now()
+    };
+    
+    const finalPayload = { ...defaultPayload, ...payload };
+    
+    if (secret) {
+        return jwt.sign(finalPayload, secret);
+    } else {
+        return jwt.sign(finalPayload, '', { algorithm: 'none' });
+    }
+}
+
+// Health check configuration
+let healthStatus = {
+    isHealthy: false,
+    lastCheck: null,
+    lastError: null,
+    responseTime: null
+};
+
+let healthCheckCounter = 0;
+let isHealthCheckRunning = false;
+const processId = process.pid;
+
+// Health check function - simplified and more reliable
+async function performHealthCheck() {
+    // Prevent multiple health checks from running simultaneously
+    if (isHealthCheckRunning) {
+        console.log(`[${new Date().toISOString()}] [PID:${processId}] Health check already running, skipping...`);
+        return;
+    }
+    
+    isHealthCheckRunning = true;
+    healthCheckCounter++;
+    const checkId = healthCheckCounter;
+    const startTime = Date.now();
+    const https = require('https');
+    
+    console.log(`[${new Date().toISOString()}] [PID:${processId}] Starting health check #${checkId}`);
+    
+    return new Promise((resolve) => {
+        // Test basic connectivity to the MediaPackage endpoint
+        // We'll accept any response as long as we can connect (even 404 is fine)
+        const req = https.request(process.env.PROXY_TARGET, { 
+            method: 'HEAD',
+            timeout: 8000, // 8 second timeout
+            headers: {
+                'User-Agent': 'MediaPackage-Proxy-HealthCheck/1.0'
+            }
+        }, (res) => {
+            const responseTime = Date.now() - startTime;
+            
+            // Any response means the server is reachable and responding
+            // 404 is expected for the root path, but server is still healthy
+            healthStatus = {
+                isHealthy: true,
+                lastCheck: new Date().toISOString(),
+                lastError: null,
+                responseTime: responseTime
+            };
+            
+            console.log(`[${new Date().toISOString()}] Health check #${checkId}: HEALTHY - Status: ${res.statusCode}, Response time: ${responseTime}ms`);
+            isHealthCheckRunning = false;
+            resolve();
+        });
+        
+        req.on('error', (err) => {
+            const responseTime = Date.now() - startTime;
+            
+            healthStatus = {
+                isHealthy: false,
+                lastCheck: new Date().toISOString(),
+                lastError: err.message,
+                responseTime: responseTime
+            };
+            
+            console.log(`[${new Date().toISOString()}] Health check #${checkId}: UNHEALTHY - Error: ${err.message}, Response time: ${responseTime}ms`);
+            isHealthCheckRunning = false;
+            resolve();
+        });
+        
+        req.on('timeout', () => {
+            const responseTime = Date.now() - startTime;
+            
+            healthStatus = {
+                isHealthy: false,
+                lastCheck: new Date().toISOString(),
+                lastError: 'Request timeout (8s)',
+                responseTime: responseTime
+            };
+            
+            console.log(`[${new Date().toISOString()}] Health check #${checkId}: UNHEALTHY - Timeout after ${responseTime}ms`);
+            req.destroy();
+            isHealthCheckRunning = false;
+            resolve();
+        });
+        
+        req.end();
+    });
+}
+
+// Start health check interval (every 60 seconds to reduce load)
+console.log('Setting up health check interval: 60 seconds');
+const healthCheckInterval = setInterval(() => {
+    console.log(`[${new Date().toISOString()}] [PID:${processId}] Health check interval triggered`);
+    performHealthCheck();
+}, 60000);
+
+// Perform initial health check
+console.log('Performing initial health check...');
+performHealthCheck();
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: healthStatus.isHealthy ? 'healthy' : 'unhealthy',
+        target: process.env.PROXY_TARGET,
+        lastCheck: healthStatus.lastCheck,
+        responseTime: healthStatus.responseTime,
+        error: healthStatus.lastError
+    });
+});
+
+// JWT encoding endpoints
+app.get('/jwt/encode', (req, res) => {
+    try {
+        const payload = req.query;
+        const encodedPayload = encodeSteeringParams(payload);
+        res.json({
+            encoded: encodedPayload,
+            payload: JSON.parse(Buffer.from(encodedPayload, 'base64').toString())
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/jwt/encode', (req, res) => {
+    try {
+        const payload = req.body;
+        const encodedPayload = encodeSteeringParams(payload);
+        res.json({
+            encoded: encodedPayload,
+            payload: JSON.parse(Buffer.from(encodedPayload, 'base64').toString())
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/jwt/generate', (req, res) => {
+    try {
+        const payload = req.query;
+        const secret = req.query.secret || '';
+        const token = generateJWT(payload, secret);
+        res.json({
+            token: token,
+            payload: JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/jwt/generate', (req, res) => {
+    try {
+        const { payload, secret = '' } = req.body;
+        const token = generateJWT(payload, secret);
+        res.json({
+            token: token,
+            payload: JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Handle all requests
 app.use(async (req, res, next) => {
     console.log('Request Path', req.path);
@@ -32,7 +259,7 @@ app.use(async (req, res, next) => {
         try {
             // Make direct request to MediaPackage
             const https = require('https');
-            const targetUrl = 'https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com' + req.path;
+            const targetUrl = process.env.PROXY_TARGET + req.path;
             console.log('Fetching from:', targetUrl);
             
             https.get(targetUrl, (proxyRes) => {
@@ -88,7 +315,7 @@ app.use(async (req, res, next) => {
         // Handle other files with direct proxy
         console.log('Direct proxy for non-manifest file');
         const proxy = createProxyMiddleware({
-            target: 'https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com',
+            target: process.env.PROXY_TARGET,
             changeOrigin: true,
         });
         
@@ -97,6 +324,10 @@ app.use(async (req, res, next) => {
 });
 
 app.listen(8081, () => {
-    console.log('MediaPackage proxy server running on port 8081');
-    console.log('Proxy target: https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com');
+    console.log(`[PID:${processId}] MediaPackage proxy server running on port 8081`);
+    console.log(`[PID:${processId}] Proxy target:`, process.env.PROXY_TARGET);
+    console.log(`[PID:${processId}] Health check endpoint: http://localhost:8081/health`);
+    console.log(`[PID:${processId}] JWT encode endpoint: http://localhost:8081/jwt/encode`);
+    console.log(`[PID:${processId}] JWT generate endpoint: http://localhost:8081/jwt/generate`);
+    console.log(`[PID:${processId}] Health checks will run every 60 seconds`);
 });
