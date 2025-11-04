@@ -178,6 +178,153 @@ The proxy automatically modifies HLS manifests to include content steering param
 - `dotenv` - Environment variable loading
 - `m3u8-parser` - HLS manifest parsing
 
+## Deployment Options
+
+This application can be deployed in multiple ways:
+
+1. **Lambda Function** (Serverless) - See [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md)
+2. **Kubernetes (EKS)** - See Kubernetes Deployment section below
+3. **Local Development** - Run directly with `node index.js`
+
+## Lambda Deployment (AWS)
+
+Deploy as a serverless Lambda function using Docker images and CDK:
+
+**Quick Start:**
+```bash
+# Set environment variables
+export AWS_ACCOUNT_ID=123456789012
+export AWS_REGION=us-west-2
+export PROXY_TARGET=https://your-mediapackage-endpoint.amazonaws.com
+
+# Build and push Docker image
+./scripts/build-lambda-docker.sh
+
+# Deploy Lambda function
+./scripts/deploy-lambda.sh
+```
+
+For detailed instructions, see [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md).
+
+**Features:**
+- Serverless architecture (pay per request)
+- Automatic scaling
+- Function URL for HTTP access
+- Container-based deployment
+- Infrastructure as Code with CDK
+
+## Kubernetes Deployment
+
+This application can be deployed to an EKS cluster using the provided Kubernetes manifests.
+
+### Prerequisites
+
+1. **EKS Cluster**: Running EKS cluster with kubectl configured
+2. **Docker Registry**: Access to a container registry (ECR, Docker Hub, etc.)
+3. **Ingress Controller**: NGINX Ingress Controller installed
+4. **TLS Certificate**: SSL certificate for your domain
+
+### Quick Deployment
+
+1. **Build and push the Docker image:**
+```bash
+# Set your registry
+export DOCKER_REGISTRY=your-registry.com
+export TAG=v1.0.0
+
+# Build and push
+./scripts/build-and-push.sh
+```
+
+2. **Deploy to EKS:**
+```bash
+./scripts/deploy.sh
+```
+
+3. **Update the ingress hostname:**
+```bash
+# Edit k8s/ingress.yaml and replace 'yourdomain.com' with your actual domain
+kubectl apply -f k8s/ingress.yaml
+```
+
+### Configuration
+
+#### Environment Variables
+Update `k8s/configmap.yaml` with your MediaPackage endpoint:
+```yaml
+data:
+  PROXY_TARGET: "https://your-mediapackage-endpoint.amazonaws.com"
+```
+
+#### Scaling
+The deployment includes Horizontal Pod Autoscaler (HPA) that automatically scales your application based on resource usage:
+
+**HPA Configuration:**
+- **Min replicas**: 2 (always maintains minimum availability)
+- **Max replicas**: 10 (prevents resource exhaustion)
+- **CPU target**: 70% (scales up when average CPU > 70%)
+- **Memory target**: 80% (scales up when average memory > 80%)
+
+**How HPA Works:**
+1. **Monitoring**: Continuously monitors CPU and memory usage across all pods
+2. **Scaling Up**: When resource usage exceeds thresholds, automatically adds more pods
+3. **Scaling Down**: When usage drops, removes excess pods to save resources
+4. **Load Distribution**: New pods automatically receive traffic via the service
+
+**Example Scenario:**
+```
+Normal Load: 2 pods (CPU: 30%, Memory: 40%) → HPA: No action
+Traffic Spike: CPU hits 75% → HPA: Adds 2-3 more pods
+Load Distribution: 5 pods handling traffic → HPA: Monitors
+Traffic Drops: CPU drops to 25% → HPA: Removes 2-3 pods
+Result: Back to 2 pods, cost optimized
+```
+
+**Benefits:**
+- **Cost Efficient**: Only runs pods when needed
+- **High Availability**: Always maintains minimum pods
+- **Automatic**: No manual intervention required
+- **Performance**: Handles traffic spikes seamlessly
+
+#### Health Checks
+- **Liveness probe**: `/health` endpoint every 30s
+- **Readiness probe**: `/health` endpoint every 10s
+- **Startup delay**: 30s for liveness, 10s for readiness
+
+### Monitoring
+
+Check deployment status:
+```bash
+kubectl get pods -n mediapackage-proxy
+kubectl get services -n mediapackage-proxy
+kubectl get ingress -n mediapackage-proxy
+kubectl get hpa -n mediapackage-proxy
+```
+
+View logs:
+```bash
+kubectl logs -f deployment/mediapackage-proxy -n mediapackage-proxy
+```
+
+Port forward for local testing:
+```bash
+kubectl port-forward service/mediapackage-proxy-service 8081:80 -n mediapackage-proxy
+```
+
+### Cleanup
+
+Remove all resources:
+```bash
+./scripts/cleanup.sh
+```
+
+### Security Features
+
+- **Non-root user**: Container runs as user 1001
+- **Read-only filesystem**: Enhanced security
+- **Resource limits**: CPU and memory constraints
+- **Security context**: Privilege escalation disabled
+
 ## License
 
 ISC

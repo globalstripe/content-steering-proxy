@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediapackage-proxy
+  namespace: mediapackage-proxy
+  labels:
+    app: mediapackage-proxy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mediapackage-proxy
+  template:
+    metadata:
+      labels:
+        app: mediapackage-proxy
+    spec:
+      containers:
+      - name: mediapackage-proxy
+        image: mediapackage-proxy:latest
+        ports:
+        - containerPort: 8081
+          name: http
+        env:
+        - name: PROXY_TARGET
+          valueFrom:
+            configMapKeyRef:
+              name: mediapackage-proxy-config
+              key: PROXY_TARGET
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: mediapackage-proxy-config
+              key: NODE_ENV
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+
+

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mediapackage-proxy-config
+  namespace: mediapackage-proxy
+data:
+  PROXY_TARGET: "https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com"
+  NODE_ENV: "production"
+
+

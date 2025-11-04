@@ -1,0 +1,46 @@
+<MPD ...>
+
+<Period>
+ <BaseURL serviceLocation="alpha">https://cdn-a.com</BaseURL>
+ <BaseURL serviceLocation="beta">https://cdn-b.com</BaseURL>
+</Period>
+<ContentSteering defaultServiceLocation="alpha" queryBeforeStart="false">
+https://your-content-steeringserver.com/app/instance1234
+</ContentSteering>
+
+</MPD>
+
+# This contentSteering Element must be the last element in the MPD
+# Put the contentSteering Element right at the very eyJjZG5PcmRlciI6WyJjZG4tYyIsImNkbi1hIiwiY2RuLWIiXSwibWluQml0cmF0ZSI6MTQyMDY5MiwicGF0aHdheXMiOlt7ImlkIjoiY2RuLWMiLCJ0aHJvdWdocHV0IjoyMDAwMDAwMH0seyJpZCI6ImNkbi1hIiwidGhyb3VnaHB1dCI6MjAwMDAwMDB9LHsiaWQiOiJjZG4tYiIsInRocm91Z2hwdXQiOjIwMDAwMDAwfV19
+
+As Apple implemented the spec before DASH ... 
+
+So a dash steering server reponse looks like This
+
+{
+"VERSION": 1,
+"TTL": 30,
+"RELOAD-URI": "https://steering-server.com/steer",
+"PATHWAY-PRIORITY": ["CDN1", "CDN2", "CDN3", "CDN4"]
+}
+
+ (there is currently on version 1)
+ TTL - how long before you should revalidate
+ RELOAD-URI - optional - could point to a different steering server on next request
+
+# Will Law video explainer: https://www.youtube.com/watch?v=o9Pa5y-Usxw
+
+# Github discussion here https://github.com/Dash-Industry-Forum/Content-Steering/issues
+
+Additional Params on the steering server requests
+
+/ContentSteering?_DASH_pathway=alpha&_DASH_throughput=84267048
+/ContentSteering?_DASH_pathway=beta&_DASH_throughput=131642064
+/ContentSteering?_DASH_pathway=alpha&_DASH_throughput=131642064
+
+# These are added by the player to indicate the current pathway being used 
+# and the current throughput that is being delivered to the player
+
+There are HLS equivalents of these ... the use of DASH_ indicates to the steering server this is
+a DASH player that is making the request
+this implies we could use the same sttering server for both HLS and DASH

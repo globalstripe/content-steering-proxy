@@ -1,14 +1,16 @@
 // https://6180c994cb835402.mediapackage.eu-west-1.amazonaws.com/out/v1/1ddf1ec05c0b4585bcf3df2a40d5ffdf/index.m3u8
 
-// Load environment variables from .env.local
-require('dotenv').config({ path: '.env.local' });
+// Load environment variables from .env.local (only if file exists and not in Lambda)
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    require('dotenv').config({ path: '.env.local' });
+}
 
 const express = require('express');
 const { createProxyMiddleware, fixRequestBody } = require('http-proxy-middleware');
 const { Transform } = require('stream');
 const jwt = require('jsonwebtoken');
 
-// Some useful parses
+// Some useful parsebet
 // https://www.npmjs.com/package/m3u8-parser
 const m3u8Parser = require('m3u8-parser');
 
@@ -36,6 +38,26 @@ const app = express();
 
 // Middleware
 app.use(express.json());
+
+// DASH pathway and throughput detection middleware
+app.use((req, res, next) => {
+    // Check for DASH-specific query parameters
+    if (req.query._DASH_pathway || req.query._DASH_throughput) {
+        console.log(`[${new Date().toISOString()}] DASH Parameters detected:`);
+        console.log(`  Pathway: ${req.query._DASH_pathway || 'not specified'}`);
+        console.log(`  Throughput: ${req.query._DASH_throughput || 'not specified'}`);
+        console.log(`  Path: ${req.path}`);
+        console.log(`  User-Agent: ${req.get('User-Agent') || 'not specified'}`);
+        
+        // Store DASH parameters in request object for later use
+        req.dashParams = {
+            pathway: req.query._DASH_pathway,
+            throughput: req.query._DASH_throughput ? parseInt(req.query._DASH_throughput) : null,
+            timestamp: new Date().toISOString()
+        };
+    }
+    next();
+});
 
 // JWT encoding function for content steering parameters
 function encodeSteeringParams(payload) {
@@ -84,10 +106,32 @@ function generateJWT(payload, secret = '') {
     }
 }
 
+// Function to generate JWT based on DASH parameters
+function generateJWTFromDASHParams(dashParams) {
+    if (!dashParams || !dashParams.pathway || !dashParams.throughput) {
+        return null;
+    }
+    
+    const payload = {
+        minBitrate: 914878,
+        cdnOrder: ["cdn-c", "cdn-a", "cdn-b"],
+        pathways: [
+            { id: dashParams.pathway, throughput: dashParams.throughput },
+            { id: "cdn-a", throughput: 9000000 },
+            { id: "cdn-b", throughput: 8000000 },
+            { id: "cdn-c", throughput: 1000 }
+        ],
+        timestamp: Date.now()
+    };
+    
+    return jwt.sign(payload, '', { algorithm: 'none' });
+}
+
 // Health check configuration
+// Initialize with a default healthy state for Lambda (health checks disabled in Lambda)
 let healthStatus = {
-    isHealthy: false,
-    lastCheck: null,
+    isHealthy: process.env.AWS_LAMBDA_FUNCTION_NAME ? true : false,
+    lastCheck: process.env.AWS_LAMBDA_FUNCTION_NAME ? new Date().toISOString() : null,
     lastError: null,
     responseTime: null
 };
@@ -174,15 +218,18 @@ async function performHealthCheck() {
 }
 
 // Start health check interval (every 60 seconds to reduce load)
-console.log('Setting up health check interval: 60 seconds');
-const healthCheckInterval = setInterval(() => {
-    console.log(`[${new Date().toISOString()}] [PID:${processId}] Health check interval triggered`);
-    performHealthCheck();
-}, 60000);
+// Only start health checks if not running in Lambda
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    console.log('Setting up health check interval: 60 seconds');
+    const healthCheckInterval = setInterval(() => {
+        console.log(`[${new Date().toISOString()}] [PID:${processId}] Health check interval triggered`);
+        performHealthCheck();
+    }, 60000);
 
-// Perform initial health check
-console.log('Performing initial health check...');
-performHealthCheck();
+    // Perform initial health check
+    console.log('Performing initial health check...');
+    performHealthCheck();
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -193,6 +240,42 @@ app.get('/health', (req, res) => {
         responseTime: healthStatus.responseTime,
         error: healthStatus.lastError
     });
+});
+
+// DASH parameters endpoint
+app.get('/dash-params', (req, res) => {
+    res.json({
+        message: 'DASH parameters endpoint',
+        currentRequest: req.dashParams || null,
+        note: 'This endpoint shows DASH parameters from the current request. Use ?_DASH_pathway=alpha&_DASH_throughput=84267048 to test.'
+    });
+});
+
+// Generate JWT from DASH parameters
+app.get('/dash-jwt', (req, res) => {
+    try {
+        const dashParams = req.dashParams;
+        
+        if (!dashParams || !dashParams.pathway || !dashParams.throughput) {
+            return res.status(400).json({
+                error: 'Missing DASH parameters',
+                required: ['_DASH_pathway', '_DASH_throughput'],
+                example: '?_DASH_pathway=alpha&_DASH_throughput=84267048'
+            });
+        }
+        
+        const jwt = generateJWTFromDASHParams(dashParams);
+        const encodedPayload = jwt.split('.')[1];
+        
+        res.json({
+            dashParams: dashParams,
+            jwt: jwt,
+            encodedPayload: encodedPayload,
+            payload: JSON.parse(Buffer.from(encodedPayload, 'base64').toString())
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // JWT encoding endpoints
@@ -255,6 +338,11 @@ app.use(async (req, res, next) => {
     
     if (req.path.match(/\.(m3u8|mpd)$/)) {
         console.log('Processing manifest file');
+        
+        // Log DASH parameters if present
+        if (req.dashParams) {
+            console.log(`DASH Parameters for manifest processing:`, req.dashParams);
+        }
         
         try {
             // Make direct request to MediaPackage
@@ -323,11 +411,19 @@ app.use(async (req, res, next) => {
     }
 });
 
-app.listen(8081, () => {
-    console.log(`[PID:${processId}] MediaPackage proxy server running on port 8081`);
-    console.log(`[PID:${processId}] Proxy target:`, process.env.PROXY_TARGET);
-    console.log(`[PID:${processId}] Health check endpoint: http://localhost:8081/health`);
-    console.log(`[PID:${processId}] JWT encode endpoint: http://localhost:8081/jwt/encode`);
-    console.log(`[PID:${processId}] JWT generate endpoint: http://localhost:8081/jwt/generate`);
-    console.log(`[PID:${processId}] Health checks will run every 60 seconds`);
-});
+// Only start HTTP server if not running in Lambda
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    app.listen(8081, () => {
+        console.log(`[PID:${processId}] MediaPackage proxy server running on port 8081`);
+        console.log(`[PID:${processId}] Proxy target:`, process.env.PROXY_TARGET);
+        console.log(`[PID:${processId}] Health check endpoint: http://localhost:8081/health`);
+        console.log(`[PID:${processId}] JWT encode endpoint: http://localhost:8081/jwt/encode`);
+        console.log(`[PID:${processId}] JWT generate endpoint: http://localhost:8081/jwt/generate`);
+        console.log(`[PID:${processId}] DASH params endpoint: http://localhost:8081/dash-params`);
+        console.log(`[PID:${processId}] DASH JWT endpoint: http://localhost:8081/dash-jwt`);
+        console.log(`[PID:${processId}] Health checks will run every 60 seconds`);
+    });
+}
+
+// Export app for Lambda
+module.exports = app;

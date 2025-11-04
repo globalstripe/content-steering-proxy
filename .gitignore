@@ -206,3 +206,10 @@ coverage/
 # Build outputs
 build/
 dist/
+
+# CDK
+cdk.out
+cdk.context.json
+infrastructure/node_modules
+infrastructure/*.js
+infrastructure/*.d.ts
